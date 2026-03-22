@@ -1,7 +1,8 @@
-import { Audio, InterruptionModeIOS, InterruptionModeAndroid } from 'expo-av';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import type { AudioPlayer } from 'expo-audio';
 
 // ─── Ringtone registry ────────────────────────────────────────────────────────
-// All sounds are bundled locally (assets/sounds/*.wav) — no internet needed!
+// All sounds are bundled locally — no internet needed!
 
 export type RingtoneCategory = 'loud' | 'gentle' | 'funny' | 'normal';
 
@@ -10,12 +11,11 @@ export interface Ringtone {
   name:     string;
   emoji:    string;
   category: RingtoneCategory;
-  sound:    number; // Metro require() returns a number (asset ID)
+  sound:    number; // Metro require() asset ID
 }
 
 export const RINGTONES: Record<string, Ringtone> = {
-
-  // ── LOUD ──────────────────────────────────────────────────
+  // ── LOUD ────────────────────────────────────────────────────
   alarm_classic: {
     key: 'alarm_classic', name: 'Classic Alarm',  emoji: '🔔',
     category: 'loud',
@@ -36,8 +36,7 @@ export const RINGTONES: Record<string, Ringtone> = {
     category: 'loud',
     sound: require('../../assets/sounds/alarm_deep.wav'),
   },
-
-  // ── GENTLE ────────────────────────────────────────────────
+  // ── GENTLE ──────────────────────────────────────────────────
   gentle_soft: {
     key: 'gentle_soft',   name: 'Soft Tone',       emoji: '🌙',
     category: 'gentle',
@@ -53,8 +52,7 @@ export const RINGTONES: Record<string, Ringtone> = {
     category: 'gentle',
     sound: require('../../assets/sounds/gentle_wave.wav'),
   },
-
-  // ── FUNNY ─────────────────────────────────────────────────
+  // ── FUNNY ───────────────────────────────────────────────────
   funny_squeak: {
     key: 'funny_squeak',  name: 'Mouse Squeak!',   emoji: '🐭',
     category: 'funny',
@@ -70,8 +68,7 @@ export const RINGTONES: Record<string, Ringtone> = {
     category: 'funny',
     sound: require('../../assets/sounds/funny_bounce.wav'),
   },
-
-  // ── NORMAL ────────────────────────────────────────────────
+  // ── NORMAL ──────────────────────────────────────────────────
   normal_bell: {
     key: 'normal_bell',   name: 'Classic Bell',    emoji: '🔕',
     category: 'normal',
@@ -100,77 +97,53 @@ export const RINGTONE_CATEGORIES: { key: RingtoneCategory; label: string; emoji:
 ];
 
 // ─── Playback state ───────────────────────────────────────────────────────────
-let alarmSound:   Audio.Sound | null = null;
-let previewSound: Audio.Sound | null = null;
-let previewTimer: ReturnType<typeof setTimeout> | null = null;
+let alarmPlayer:   AudioPlayer | null = null;
+let previewPlayer: AudioPlayer | null = null;
+let previewTimer:  ReturnType<typeof setTimeout> | null = null;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-async function safeUnload(sound: Audio.Sound | null) {
-  if (!sound) return;
-  try { await sound.stopAsync(); }   catch {}
-  try { await sound.unloadAsync(); } catch {}
-}
-
-async function setAlarmMode() {
-  try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS:         false,
-      playsInSilentModeIOS:       true,
-      interruptionModeIOS:        InterruptionModeIOS.DoNotMix,
-      staysActiveInBackground:    true,
-      interruptionModeAndroid:    InterruptionModeAndroid.DoNotMix,
-      shouldDuckAndroid:          false,
-      playThroughEarpieceAndroid: false,
-    });
-  } catch {}
-}
-
-async function resetMode() {
-  try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS:         false,
-      playsInSilentModeIOS:       false,
-      interruptionModeIOS:        InterruptionModeIOS.MixWithOthers,
-      staysActiveInBackground:    false,
-      interruptionModeAndroid:    InterruptionModeAndroid.DuckOthers,
-      shouldDuckAndroid:          true,
-      playThroughEarpieceAndroid: false,
-    });
-  } catch {}
+function safeStop(player: AudioPlayer | null) {
+  if (!player) return;
+  try { player.pause(); }   catch {}
+  try { player.remove(); }  catch {}
 }
 
 // ─── Alarm playback ───────────────────────────────────────────────────────────
 export async function startAlarmSound(ringtone: RingtoneKey = 'alarm_classic'): Promise<void> {
-  await safeUnload(alarmSound);
-  alarmSound = null;
-  await setAlarmMode();
+  safeStop(alarmPlayer);
+  alarmPlayer = null;
+
+  try {
+    await setAudioModeAsync({
+      playsInSilentMode: true,
+      shouldPlayInBackground: true,
+      interruptionMode: 'doNotMix',
+    });
+  } catch {}
 
   const tone    = RINGTONES[ringtone] ?? RINGTONES.alarm_classic;
-  const { sound } = await Audio.Sound.createAsync(
-    tone.sound,
-    { shouldPlay: true, isLooping: true, volume: 1.0 }
-  );
-  alarmSound = sound;
+  alarmPlayer   = createAudioPlayer(tone.sound);
+  alarmPlayer.loop = true;
+  alarmPlayer.play();
 }
 
 export async function stopAlarmSound(): Promise<void> {
-  await safeUnload(alarmSound);
-  alarmSound = null;
-  await resetMode();
+  safeStop(alarmPlayer);
+  alarmPlayer = null;
+  try {
+    await setAudioModeAsync({ playsInSilentMode: false, shouldPlayInBackground: false });
+  } catch {}
 }
 
 // ─── Preview playback ─────────────────────────────────────────────────────────
 export async function previewRingtone(ringtone: RingtoneKey): Promise<void> {
   if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
-  await safeUnload(previewSound);
-  previewSound = null;
+  safeStop(previewPlayer);
+  previewPlayer = null;
 
   const tone    = RINGTONES[ringtone] ?? RINGTONES.alarm_classic;
-  const { sound } = await Audio.Sound.createAsync(
-    tone.sound,
-    { shouldPlay: true, isLooping: false, volume: 1.0 }
-  );
-  previewSound = sound;
+  previewPlayer = createAudioPlayer(tone.sound);
+  previewPlayer.loop = false;
+  previewPlayer.play();
 
   // Auto-stop after 4 s
   previewTimer = setTimeout(stopPreview, 4000);
@@ -178,6 +151,6 @@ export async function previewRingtone(ringtone: RingtoneKey): Promise<void> {
 
 export async function stopPreview(): Promise<void> {
   if (previewTimer) { clearTimeout(previewTimer); previewTimer = null; }
-  await safeUnload(previewSound);
-  previewSound = null;
+  safeStop(previewPlayer);
+  previewPlayer = null;
 }
